@@ -7,9 +7,9 @@
 //
 
 #import "ViewController.h"
-#import "LTZInputToolBar.h"
+#import "LTZInputBarFramework/LTZInputBar.h"
 
-@interface ViewController ()<UITableViewDelegate, UITableViewDataSource>
+@interface ViewController ()<UIGestureRecognizerDelegate, UITableViewDelegate, UITableViewDataSource, LTZInputToolBarDataSource>
 {
     UITapGestureRecognizer *_panGestureRecognizer;
     LTZInputToolBar *chatBar;
@@ -46,6 +46,7 @@
     });
     
     _panGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
+    _panGestureRecognizer.delegate = self;
     [self.view addGestureRecognizer:_panGestureRecognizer];
 }
 
@@ -56,7 +57,8 @@
                                                            scrollView:self.tableView
                                                                inView:self.view
                                                     gestureRecognizer:self.tableView.panGestureRecognizer
-                                                             delegate:self];
+                                                             delegate:self
+                                          dataSource:self];
     chatBar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
     //textView.placeHolder = @"这是测试！";
     //textView.font = [UIFont systemFontOfSize:28];
@@ -65,7 +67,7 @@
 
 - (void)dismissKeyboard
 {
-    [chatBar resignFirstResponder];
+    //[chatBar resignFirstResponder];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
@@ -86,6 +88,87 @@
     cell.textLabel.text = [NSString stringWithFormat:@"这是第%d个UITableViewCell",indexPath.row];
     
     return cell;
+}
+
+/**
+ *  Called when send a text
+ *
+ *  @param ltzInputTool The input tool
+ */
+- (void)ltzInputTool:(LTZInputTool *)ltzInputTool didSentTextContent:content
+{
+    NSLog(content);
+}
+/**
+ *  when we press the record button
+ */
+- (void)didStartRecordingWithLTZInputTool:(LTZInputTool *)ltzInputTool
+{
+    NSLog(@"didStartRecordingWithLTZInputTool");
+}
+/**
+ *  When we cancel a recording action
+ */
+- (void)didCancelRecordingWithLTZInputTool:(LTZInputTool *)ltzInputTool
+{
+    NSLog(@"didCancelRecordingWithLTZInputTool");
+}
+/**
+ *  When we finish a recording action
+ */
+- (void)didFinishRecordingWithLTZInputTool:(LTZInputTool *)ltzInputTool
+{
+    NSLog(@"didFinishRecordingWithLTZInputTool");
+}
+/**
+ *  This method called when we our finger drag outside the inputTool view during recording action
+ */
+- (void)didDragOutsideWhenRecordingWithLTZInputTool:(LTZInputTool *)ltzInputTool
+{
+    NSLog(@"didDragOutsideWhenRecordingWithLTZInputTool");
+}
+
+- (void)ltzMoreInputView:(LTZMoreInputView *)ltzMoreInputView didSelecteMoreInputViewItemAtIndex:(NSInteger)index
+{
+    NSLog(@"you have cliked on:%d",index);
+}
+/**
+ *  This method called when we our finger drag inside the inputTool again view during recording action
+ */
+- (void)didDragInsideWhenRecordingWithLTZInputTool:(LTZInputTool *)ltzInputTool
+{
+    NSLog(@"didDragInsideWhenRecordingWithLTZInputTool");
+}
+
+#pragma mark - LTZInputBarDataSource methods
+
+- (NSUInteger)numberOfItemsShowInLTZMoreInputView:(LTZMoreInputView *)ltzMoreInputView
+{
+    return 23;
+}
+- (NSString *)ltzMoreInputView:(LTZMoreInputView *)ltzMoreInputView imageNameShowAtIndex:(NSUInteger)index
+{
+    return @"keyboard_add_camera.png";
+}
+- (NSString *)ltzMoreInputView:(LTZMoreInputView *)ltzMoreInputView highlightedImageNameShowAtIndex:(NSUInteger)index
+{
+    return @"keyboard_add_photo.png";
+}
+- (NSString *)ltzMoreInputView:(LTZMoreInputView *)ltzMoreInputView titleShowAtIndex:(NSUInteger)index
+{
+    return @"testtest";
+}
+
+#pragma mark - UIGestureRecognizerDelegate methods
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
+{
+    // Disallow recognition of tap gestures in the segmented control.
+    
+    if ([touch.view isKindOfClass:[LTZInputTool class]]) {
+        return NO;
+    }
+    
+    return YES;
 }
 
 @end

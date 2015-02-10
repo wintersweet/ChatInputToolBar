@@ -9,13 +9,17 @@
 #import <UIKit/UIKit.h>
 
 @class LTZInputTool;
+
 @protocol LTZInputToolBarDelegate;
+@protocol LTZInputToolBarDataSource;
 
 @interface LTZInputToolBar : UIImageView
 /**
  *  The object that acts as the delegate of the LTZInputToolBar.
  */
 @property (weak, nonatomic) id<LTZInputToolBarDelegate> delegate;
+
+@property (weak, nonatomic) id<LTZInputToolBarDataSource> dataSource;
 /**
  *  The pan gesture recognizer responsible for handling user interaction with the system keyboard.
  */
@@ -38,8 +42,6 @@
 
 + (CGFloat)LTZInputToolBarDefaultHeight;
 
-- (CGFloat)currentToolHeight;
-
 /**
  *  init a object with a view which this inputToolBar view will display on
  *
@@ -56,7 +58,8 @@
          scrollView:(UIScrollView *)scrollView
              inView:(UIView *)contextView
   gestureRecognizer:(UIPanGestureRecognizer *)panGestureRecognizer
-           delegate:(id<LTZInputToolBarDelegate>)delegate;
+           delegate:(id<LTZInputToolBarDelegate>)delegate
+         dataSource:(id<LTZInputToolBarDataSource>)dataSource;
 
 /**
  *  close the keyboard

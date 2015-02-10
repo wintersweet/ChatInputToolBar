@@ -21,7 +21,7 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 #pragma mark - LTZInputToolBar
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-@interface LTZInputToolBar ()<UITextViewDelegate, LTZInputToolDelegate>
+@interface LTZInputToolBar ()<UITextViewDelegate, LTZInputToolPrivateDelegate>
 {
     UIView              *_contextView;
     UIScrollView        *_scrollView;
@@ -56,7 +56,7 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 #pragma mark - public methods
 - (id)initWithFrame:(CGRect)frame
 {
-    return [self initWithFrame:frame scrollView:nil inView:nil gestureRecognizer:nil delegate:nil];
+    return [self initWithFrame:frame scrollView:nil inView:nil gestureRecognizer:nil delegate:nil dataSource:nil];
 }
 
 - (id)initWithFrame:(CGRect)frame
@@ -64,6 +64,7 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
              inView:(UIView *)contextView
   gestureRecognizer:(UIPanGestureRecognizer *)panGestureRecognizer
            delegate:(id<LTZInputToolBarDelegate>)delegate
+         dataSource:(id<LTZInputToolBarDataSource>)dataSource
 {
     frame.size.height = LTZInputToolBarDefaultHeight;
     self = [super initWithFrame:frame];
@@ -71,6 +72,7 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
         _scrollView = scrollView;
         _contextView = contextView;
         _delegate = delegate;
+        _dataSource = dataSource;
         _scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
         self.panGestureRecognizer = panGestureRecognizer;
         
@@ -98,7 +100,8 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
         _inputTool = [[LTZInputTool alloc] initWithFrame:CGRectMake(0, 0, self.frame.size.width, [LTZInputTool LTZInputToolDefaultHeight])
                                                   inView:self
                                               scrollView:_scrollView
-                                                delegate:self];
+                                        privatedDelegate:self
+                                          publicDelegate:self.delegate];
         [self addSubview:_inputTool];
     }
     
@@ -113,7 +116,9 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
     if (!_moreInputView) {
         _moreInputView = ({
             
-            LTZMoreInputView *moreInputView = [[LTZMoreInputView alloc] initWithFrame:CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight)];
+            LTZMoreInputView *moreInputView = [[LTZMoreInputView alloc] initWithFrame:CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight) publicDelegate:self.delegate
+                                                                      privateDelegate:self
+                                                                           dataSource:self.dataSource];
             
             moreInputView.image = [[UIImage imageNamed:@"chat_more_bg"] resizableImageWithCapInsets:UIEdgeInsetsMake(20.0f, 20.0f, 20.0f, 20.0f)
                                                                                        resizingMode:UIImageResizingModeStretch];
@@ -199,12 +204,11 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
     self.scrollView.scrollIndicatorInsets = insets;
 }
 
-
 #if ANIMATION_SHOW_VIEW
 - (void)showViewAtIndex:(NSUInteger)index
 {
     CGRect oldFrame = CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
-    CGRect newFrame = CGRectMake(0, self.inputTool.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+    CGRect newFrame = CGRectMake(0, [self.inputTool currentFrameWhenInput].size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
     
     void(^animations)() = NULL;
     void(^completion)(BOOL) = NULL;
@@ -214,20 +218,25 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
         self.expressionInputView = currentExpressionInputView(self, _expressionInputView);
         self.expressionInputView.frame = oldFrame;
         
+        [self bringSubviewToFront:self.expressionInputView];
+        self.expressionInputView.hidden = NO;
+        
+        if (self.moreInputView ) {
+            self.moreInputView.hidden = NO;
+        }
+        
         animations = ^{
             
             self.expressionInputView.frame = newFrame;
             
-            if (self.moreInputView) {
+            if (self.moreInputView && CGRectEqualToRect( self.moreInputView.frame , newFrame)) {
                 self.moreInputView.frame = oldFrame;
             }
             
         };
         
         completion = ^(BOOL finished){
-            
-            [self bringSubviewToFront:self.expressionInputView];
-            
+            self.moreInputView.hidden = YES;
         };
         
     }else{//show the more info view
@@ -235,20 +244,25 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
         self.moreInputView = currentMoreInputView(self, _moreInputView);
         self.moreInputView.frame = oldFrame;
         
+        [self bringSubviewToFront:self.moreInputView];
+        self.moreInputView.hidden = NO;
+        
+        if (self.expressionInputView ) {
+            self.expressionInputView.hidden = NO;
+        }
+        
         animations = ^{
             
             self.moreInputView.frame = newFrame;
             
-            if (self.expressionInputView) {
+            if (self.expressionInputView && CGRectEqualToRect( self.expressionInputView.frame , newFrame)) {
                 self.expressionInputView.frame = oldFrame;
             }
             
         };
         
         completion = ^(BOOL finished){
-            
-            [self bringSubviewToFront:self.moreInputView];
-            
+            self.expressionInputView.hidden = YES;
         };
         
     }
@@ -285,12 +299,14 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
             //  panning occurs in contextView coordinates already
             CGFloat changedHeight = self.originFrame.origin.y - newKeyboardFrame.origin.y;
 #if ANIMATION_SHOW_VIEW
+            /*
             if (self.expressionInputView && self.expressionInputView.frame.origin.y != self.frame.size.height) {
                 self.expressionInputView.frame = CGRectMake(0, self.inputTool.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
             }
             if (self.moreInputView && self.moreInputView.frame.origin.y != self.frame.size.height) {
                 self.moreInputView.frame = CGRectMake(0, self.inputTool.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
             }
+            */
 #else
             self.expressionInputView.frame = CGRectMake(0, self.inputTool.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
             self.moreInputView.frame = CGRectMake(0, self.inputTool.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
@@ -302,17 +318,58 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#pragma mark - LTZInputToolDelegate methods
+#pragma mark - LTZInputToolPrivateDelegate methods
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-- (void)ltzInputTool:(LTZInputTool *)ltzInputTool didSentTextContent:content
+
+- (void)ltzInputToolDidShowRecordView:(LTZInputTool *)ltzInputTool
 {
+#if ANIMATION_SHOW_VIEW
     
+#else
+    
+#endif
 }
 
 - (void)ltzInputToolDidShowExpressionView:(LTZInputTool *)ltzInputTool
 {
 #if ANIMATION_SHOW_VIEW
-    [self showViewAtIndex:0];
+    
+    if (ltzInputTool.isMoreViewShowing || ltzInputTool.isExpressionViewShowing) {
+        [self showViewAtIndex:0];
+    }else{
+        CGRect oldFrame = CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+        CGRect newFrame = CGRectMake(0, [self.inputTool currentFrameWhenInput].size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+        
+        if ([ltzInputTool.inputTextView isFirstResponder]) {
+            self.expressionInputView = currentExpressionInputView(self, _expressionInputView);
+            self.expressionInputView.frame = oldFrame;
+            [self bringSubviewToFront:self.expressionInputView];
+            self.expressionInputView.hidden = NO;
+            self.moreInputView.hidden = YES;
+            
+            void(^animations)() = ^{
+                
+                self.expressionInputView.frame = newFrame;
+                
+            };
+            void(^completion)(BOOL) =^(BOOL finished){
+                
+            };
+            
+            [UIView animateWithDuration:LTZInputToolBarDefaultAnimationDuration
+                                  delay:0.0f
+                                options:LTZAnimationOptionsForCurve(LTZInputToolBarDefaultAnimationCurve)
+                             animations:animations
+                             completion:completion];
+            
+        }else{
+            self.expressionInputView = currentExpressionInputView(self, _expressionInputView);
+            self.expressionInputView.frame = newFrame;
+            [self bringSubviewToFront:self.expressionInputView];
+            self.expressionInputView.hidden = NO;
+            self.moreInputView.hidden = YES;
+        }
+    }
 #else
     [self bringSubviewToFront:self.expressionInputView];
 #endif
@@ -320,7 +377,43 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 - (void)ltzInputToolDidShowMoreInfoView:(LTZInputTool *)ltzInputTool
 {
 #if ANIMATION_SHOW_VIEW
-    [self showViewAtIndex:1];
+    if (ltzInputTool.isMoreViewShowing || ltzInputTool.isExpressionViewShowing) {
+        [self showViewAtIndex:1];
+    }else{
+        CGRect oldFrame = CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+        CGRect newFrame = CGRectMake(0, [self.inputTool currentFrameWhenInput].size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+        
+        if ([ltzInputTool.inputTextView isFirstResponder]) {
+            self.moreInputView = currentMoreInputView(self, _moreInputView);
+            self.moreInputView.frame = oldFrame;
+            [self bringSubviewToFront:self.moreInputView];
+            self.moreInputView.hidden = NO;
+            self.expressionInputView.hidden = YES;
+            
+            void(^animations)() = ^{
+                
+                self.moreInputView.frame = newFrame;
+                
+            };
+            void(^completion)(BOOL) =^(BOOL finished){
+                
+            };
+            
+            [UIView animateWithDuration:LTZInputToolBarDefaultAnimationDuration
+                                  delay:0.0f
+                                options:LTZAnimationOptionsForCurve(LTZInputToolBarDefaultAnimationCurve)
+                             animations:animations
+                             completion:completion];
+
+        }else{
+            self.moreInputView = currentMoreInputView(self, _moreInputView);
+            self.moreInputView.frame = newFrame;
+            [self bringSubviewToFront:self.moreInputView];
+            self.expressionInputView.hidden = YES;
+            self.moreInputView.hidden = NO;
+        }
+    }
+    
 #else
     [self bringSubviewToFront:self.moreInputView];
 #endif
@@ -328,11 +421,85 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 
 - (void)ltzInputToolWillBecomeFirstResponder:(LTZInputTool *)ltzInputTool
 {
-
+    //do something here...
+#if ANIMATION_SHOW_VIEW
+    
+    CGRect oldFrame = CGRectMake(0, self.frame.size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+    CGRect newFrame = CGRectMake(0, [self.inputTool currentFrameWhenInput].size.height, self.frame.size.width, LTZInputToolBarDefaultKetboardHeight);
+    
+    if (self.inputTool.isMoreViewShowing) {
+        
+        self.moreInputView = currentMoreInputView(self, _moreInputView);
+        self.moreInputView.frame = newFrame;
+        [self bringSubviewToFront:self.moreInputView];
+        self.moreInputView.hidden = NO;
+        
+        if (self.expressionInputView) {
+            self.expressionInputView.hidden = YES;
+        }
+        
+        void(^animations)() = ^{
+            
+            self.moreInputView.frame = oldFrame;
+            
+            if (self.expressionInputView && CGRectEqualToRect( self.expressionInputView.frame , newFrame)) {
+                self.expressionInputView.frame = oldFrame;
+            }
+            
+        };
+        void(^completion)(BOOL) =^(BOOL finished){
+            self.moreInputView.hidden = YES;
+        };
+        
+        [UIView animateWithDuration:LTZInputToolBarDefaultAnimationDuration
+                              delay:0.0f
+                            options:LTZAnimationOptionsForCurve(LTZInputToolBarDefaultAnimationCurve)
+                         animations:animations
+                         completion:completion];
+        
+    }else if (self.inputTool.isExpressionViewShowing) {
+        
+        self.expressionInputView = currentExpressionInputView(self, _expressionInputView);
+        self.expressionInputView.frame = newFrame;
+        [self bringSubviewToFront:self.expressionInputView];
+        self.expressionInputView.hidden = NO;
+        
+        if (self.moreInputView) {
+            self.moreInputView.hidden = YES;
+        }
+        
+        void(^animations)() = ^{
+            
+            self.expressionInputView.frame = oldFrame;
+            
+            if (self.moreInputView && CGRectEqualToRect( self.moreInputView.frame , newFrame)) {
+                self.moreInputView.frame = oldFrame;
+            }
+        };
+        void(^completion)(BOOL) =^(BOOL finished){
+            self.expressionInputView.hidden = YES;
+        };
+        
+        [UIView animateWithDuration:LTZInputToolBarDefaultAnimationDuration
+                              delay:0.0f
+                            options:LTZAnimationOptionsForCurve(LTZInputToolBarDefaultAnimationCurve)
+                         animations:animations
+                         completion:completion];
+    }else{
+        if (self.moreInputView) {
+            self.moreInputView.frame = oldFrame;
+        }
+        
+        if (self.expressionInputView) {
+            self.expressionInputView.frame = oldFrame;
+        }
+    }
+#else
+#endif
 }
 - (void)ltzInputToolWillResignFirstResponder:(LTZInputTool *)ltzInputTool
 {
-
+    //do something here...
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -340,17 +507,14 @@ static void * LTZInputBarFrameKeyValueObservingContext = &LTZInputBarFrameKeyVal
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if ANIMATION_SHOW_VIEW
-static inline LTZMoreInputView *currentMoreInputView(UIView *view,LTZMoreInputView *moreInputView)
+static inline LTZMoreInputView *currentMoreInputView(LTZInputToolBar *view,LTZMoreInputView *moreInputView)
 {
     if (!moreInputView) {
         moreInputView = ({
             
-            LTZMoreInputView *MoreInputView = [[LTZMoreInputView alloc] initWithFrame:CGRectMake(0, view.frame.size.height, view.frame.size.width, LTZInputToolBarDefaultKetboardHeight)];
-            
-            MoreInputView.image = [[UIImage imageNamed:@"chat_more_bg"] resizableImageWithCapInsets:UIEdgeInsetsMake(20.0f, 20.0f, 20.0f, 20.0f)
-                                                                                       resizingMode:UIImageResizingModeStretch];
-            
-            MoreInputView.userInteractionEnabled = YES;
+            LTZMoreInputView *MoreInputView = [[LTZMoreInputView alloc] initWithFrame:CGRectMake(0, view.frame.size.height, view.frame.size.width, LTZInputToolBarDefaultKetboardHeight) publicDelegate:view.delegate
+                                                                      privateDelegate:view
+                                                                           dataSource:view.dataSource];
             [view addSubview:MoreInputView];
             MoreInputView;
         });
@@ -359,7 +523,7 @@ static inline LTZMoreInputView *currentMoreInputView(UIView *view,LTZMoreInputVi
     return moreInputView;
 }
 
-static inline LTZExpressionInputView *currentExpressionInputView(UIView *view,LTZExpressionInputView *expressionInputView)
+static inline LTZExpressionInputView *currentExpressionInputView(LTZInputToolBar *view,LTZExpressionInputView *expressionInputView)
 {
     if (!expressionInputView) {
         expressionInputView = ({

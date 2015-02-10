@@ -20,6 +20,14 @@
 
 static void * LTZInputTextViewHidenKeyValueObservingContext = &LTZInputTextViewHidenKeyValueObservingContext;
 
+typedef NS_ENUM(NSUInteger, LTZInputToolStateType) {
+    LTZInputToolStateTypeNone = 0,
+    LTZInputToolStateTypeText,
+    LTZInputToolStateTypeRecord,
+    LTZInputToolStateTypeExpression,
+    LTZInputToolStateTypeMore
+};
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - inline methods
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -121,6 +129,8 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 
 }
 
+@property (assign ,nonatomic) LTZInputToolStateType inputToolCurrentStateType;
+
 @end
 
 @implementation LTZInputTool
@@ -140,19 +150,21 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 
 - (instancetype)initWithFrame:(CGRect)frame
 {
-    return [self initWithFrame:frame inView:nil scrollView:nil delegate:nil];
+    return [self initWithFrame:frame inView:nil scrollView:nil privatedDelegate:nil publicDelegate:nil];
 }
 
 - (instancetype)initWithFrame:(CGRect)frame
                        inView:(UIView *)inView
                    scrollView:(UIScrollView *)scrollView
-                     delegate:(id<LTZInputToolDelegate>)delegate
+             privatedDelegate:(id<LTZInputToolPrivateDelegate>)privateDelegate
+               publicDelegate:(id<LTZInputToolPublicDelegate>) publicDelegate
 {
     self = [super initWithFrame:frame];
     if (self) {
-        _inView         =   inView;
-        _scrollView     =   scrollView;
-        self.delegate   =   delegate;
+        _inView                 =   inView;
+        _scrollView             =   scrollView;
+        self.privateDelegate    =   privateDelegate;
+        self.publicDelegate     =   publicDelegate;
         
         [self _initData];
         [self _setupViews];
@@ -168,8 +180,8 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
     if ([_inputTextView isFirstResponder]) {
         result = [_inputTextView resignFirstResponder];
     }else{
-        [self resumeOriginalState];
         [self hideMoreViewOrExpressionView];
+        [self resumeOriginalState];
         result = YES;
     }
     
@@ -193,6 +205,20 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
     if ([self isFirstResponder]) return NO;
     
     return [_inputTextView becomeFirstResponder];
+}
+
+- (CGRect)currentFrameWhenRecord
+{
+    CGRect frame = self.frame;
+    frame.size.height = LTZInputToolDefaultHeight;
+    return frame;
+}
+
+- (CGRect)currentFrameWhenInput
+{
+    CGRect frame = self.frame;
+    frame.size.height = LTZInputToolDefaultHeight + (_inputTextView.frame.size.height - _recordButton.frame.size.height);
+    return frame;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -233,7 +259,7 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
         textView.delegate = self;
         textView.internalTextView.scrollIndicatorInsets = UIEdgeInsetsMake(5, 0, 5, 0);
         textView.backgroundColor = [UIColor whiteColor];
-        textView.placeholder = @"message...";
+        textView.placeholder = NSLocalizedStringFromTable(@"input_text_view_placeholder",@"LTZInputBar", nil);
         textView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         
         // textView.text = @"test\n\ntest";
@@ -260,11 +286,18 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
         button.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;
         [button setBackgroundImage:[[UIImage imageNamed:@"chat_record_bg"] stretchableImageWithLeftCapWidth:30 topCapHeight:30] forState:UIControlStateNormal];
         [button setBackgroundImage:[[UIImage imageNamed:@"chat_record_selected_bg"] stretchableImageWithLeftCapWidth:30 topCapHeight:30] forState:UIControlStateHighlighted];
-        [button setTitle:@"按住\t对讲" forState:UIControlStateNormal];
-        [button setTitle:@"松开\t完成" forState:UIControlStateHighlighted];
+        [button setTitle:NSLocalizedStringFromTable(@"record_button_normal_title",@"LTZInputBar", nil) forState:UIControlStateNormal];
+        [button setTitle:NSLocalizedStringFromTable(@"record_button_Highlighted_title",@"LTZInputBar", nil) forState:UIControlStateHighlighted];
         [button setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
         [button setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
         [button setHidden:YES];
+        
+        [button addTarget:self action:@selector(recordButtonTouchDown:) forControlEvents:UIControlEventTouchDown];
+        [button addTarget:self action:@selector(recordButtonTouchUpOutside:) forControlEvents:UIControlEventTouchUpOutside];
+        [button addTarget:self action:@selector(recordButtonTouchUpInside:) forControlEvents:UIControlEventTouchUpInside];
+        [button addTarget:self action:@selector(recordDragOutside:) forControlEvents:UIControlEventTouchDragExit];
+        [button addTarget:self action:@selector(recordDragInside:) forControlEvents:UIControlEventTouchDragEnter];
+        
         [self addSubview:button];
         button;
     });
@@ -332,67 +365,75 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 
 - (void)prepareToRecord
 {
-    self.isMoreViewShowing = NO;
-    self.isExpressionViewShowing = NO;
-    self.isRecordViewShowing = YES;
-    
     if ([self.inputTextView isFirstResponder]) {
         [self.inputTextView resignFirstResponder];
     }else{
         [self hideMoreViewOrExpressionView];
     }
     
-    if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputToolDidShowRecordView:)]) {
-        [self.delegate ltzInputToolDidShowRecordView:self];
+    if (self.privateDelegate && [self.privateDelegate respondsToSelector:@selector(ltzInputToolDidShowRecordView:)]) {
+        [self.privateDelegate ltzInputToolDidShowRecordView:self];
     }
+    
+    self.isMoreViewShowing = NO;
+    self.isExpressionViewShowing = NO;
+    self.isRecordViewShowing = YES;
+    
+    self.inputToolCurrentStateType = LTZInputToolStateTypeRecord;
 }
 
 - (void)prepareToInputText
 {
-    [self resumeOriginalState];
+    self.inputToolCurrentStateType = LTZInputToolStateTypeText;
     
     if (![self.inputTextView isFirstResponder]) {
         [self.inputTextView becomeFirstResponder];
     }
     
-    if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputToolDidShowInputTextView:)]) {
-        [self.delegate ltzInputToolDidShowInputTextView:self];
+    if (self.privateDelegate && [self.privateDelegate respondsToSelector:@selector(ltzInputToolDidShowInputTextView:)]) {
+        [self.privateDelegate ltzInputToolDidShowInputTextView:self];
     }
+    
+    [self resumeOriginalState];
+    self.inputToolCurrentStateType = LTZInputToolStateTypeText;
 }
 
 - (void)prepareToInputExpression
 {
-    self.isMoreViewShowing = NO;
-    self.isExpressionViewShowing = YES;
-    self.isRecordViewShowing = NO;
+    self.inputToolCurrentStateType = LTZInputToolStateTypeExpression;
+    
+    if (self.privateDelegate && [self.privateDelegate respondsToSelector:@selector(ltzInputToolDidShowExpressionView:)]) {
+        [self.privateDelegate ltzInputToolDidShowExpressionView:self];
+    }
     
     if ([self.inputTextView isFirstResponder]) {
         [self.inputTextView resignFirstResponder];
     }
     
-    if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputToolDidShowExpressionView:)]) {
-        [self.delegate ltzInputToolDidShowExpressionView:self];
-    }
-    
     [self showMoreViewOrExpressionView];
     
+    self.isMoreViewShowing = NO;
+    self.isExpressionViewShowing = YES;
+    self.isRecordViewShowing = NO;
 }
 
 - (void)prepareToInputMoreInfo
 {
-    self.isMoreViewShowing = YES;
-    self.isExpressionViewShowing = NO;
-    self.isRecordViewShowing = NO;
+    self.inputToolCurrentStateType = LTZInputToolStateTypeMore;
+    
+    if (self.privateDelegate && [self.privateDelegate respondsToSelector:@selector(ltzInputToolDidShowMoreInfoView:)]) {
+        [self.privateDelegate ltzInputToolDidShowMoreInfoView:self];
+    }
     
     if ([self.inputTextView isFirstResponder]) {
         [self.inputTextView resignFirstResponder];
     }
     
-    if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputToolDidShowMoreInfoView:)]) {
-        [self.delegate ltzInputToolDidShowMoreInfoView:self];
-    }
-    
     [self showMoreViewOrExpressionView];
+    
+    self.isMoreViewShowing = YES;
+    self.isExpressionViewShowing = NO;
+    self.isRecordViewShowing = NO;
 }
 
 - (void)resumeOriginalState
@@ -400,11 +441,12 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
     self.isMoreViewShowing = NO;
     self.isExpressionViewShowing = NO;
     self.isRecordViewShowing = NO;
+    self.inputToolCurrentStateType = LTZInputToolStateTypeNone;
 }
 
 - (void)showMoreViewOrExpressionView
 {
-    if (!self.isMoreViewShowing && !self.isExpressionViewShowing) return;
+    if (self.isMoreViewShowing || self.isExpressionViewShowing) return;
     
     // begin animation action
     [UIView beginAnimations:nil context:NULL];
@@ -428,7 +470,7 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 
 - (void)hideMoreViewOrExpressionView
 {
-    if (self.isMoreViewShowing || self.isExpressionViewShowing) return;
+    if (!self.isMoreViewShowing && !self.isExpressionViewShowing) return;
     
     // begin animation action
     [UIView beginAnimations:nil context:NULL];
@@ -453,6 +495,7 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
     self.isRecordViewShowing = NO;
     self.isExpressionViewShowing = NO;
     self.isMoreViewShowing = NO;
+    self.inputToolCurrentStateType = LTZInputToolStateTypeNone;
 }
 
 
@@ -490,6 +533,40 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillShowNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillHideNotification object:nil];
 }
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#pragma mark - record button actions
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+- (void)recordButtonTouchDown:(id)sender
+{
+    if ([self.publicDelegate respondsToSelector:@selector(didStartRecordingWithLTZInputTool:)]) {
+        [self.publicDelegate didStartRecordingWithLTZInputTool:self];
+    }
+}
+- (void)recordButtonTouchUpOutside:(id)sender
+{
+    if ([self.publicDelegate respondsToSelector:@selector(didCancelRecordingWithLTZInputTool:)]) {
+        [self.publicDelegate didCancelRecordingWithLTZInputTool:self];
+    }
+}
+- (void)recordButtonTouchUpInside:(id)sender
+{
+    if ([self.publicDelegate respondsToSelector:@selector(didFinishRecordingWithLTZInputTool:)]) {
+        [self.publicDelegate didFinishRecordingWithLTZInputTool:self];
+    }
+}
+- (void)recordDragOutside:(id)sender
+{
+    if ([self.publicDelegate respondsToSelector:@selector(didDragOutsideWhenRecordingWithLTZInputTool:)]) {
+        [self.publicDelegate didDragOutsideWhenRecordingWithLTZInputTool:self];
+    }
+
+}
+- (void)recordDragInside:(id)sender
+{
+    if ([self.publicDelegate respondsToSelector:@selector(didDragInsideWhenRecordingWithLTZInputTool:)]) {
+        [self.publicDelegate didDragInsideWhenRecordingWithLTZInputTool:self];
+    }
+}
 
 #pragma mark - 监听键盘的显示与隐藏
 -(void)inputKeyboardWillShow:(NSNotification *)notification
@@ -506,7 +583,7 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 - (void)keyboardWillShowHide:(NSNotification *)notification
 {
     
-    if (!self.isMoreViewShowing && !self.isExpressionViewShowing) {
+    if (self.inputToolCurrentStateType == LTZInputToolStateTypeNone || self.inputToolCurrentStateType == LTZInputToolStateTypeText) {
         
         CGRect keyboardRect = [[notification.userInfo objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
         
@@ -587,10 +664,14 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 - (BOOL)growingTextViewShouldBeginEditing:(LTZGrowingTextView *)growingTextView
 {
-    [self resumeOriginalState];
-    if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputToolWillBecomeFirstResponder:)]) {
-        [self.delegate ltzInputToolWillBecomeFirstResponder:self];
+
+    if (self.privateDelegate && [self.privateDelegate respondsToSelector:@selector(ltzInputToolWillBecomeFirstResponder:)]) {
+        [self.privateDelegate ltzInputToolWillBecomeFirstResponder:self];
     }
+    
+    [self resumeOriginalState];
+    self.inputToolCurrentStateType = LTZInputToolStateTypeText;
+    
     return YES;
 }
 - (BOOL)growingTextViewShouldEndEditing:(LTZGrowingTextView *)growingTextView
@@ -629,8 +710,8 @@ static inline UIViewAnimationOptions LTZAnimationOptionsForCurve(UIViewAnimation
         }
         else {
             
-            if (self.delegate && [self.delegate respondsToSelector:@selector(ltzInputTool:didSentTextContent:)]) {
-                [self.delegate ltzInputTool:self didSentTextContent:content];
+            if (self.publicDelegate && [self.publicDelegate respondsToSelector:@selector(ltzInputTool:didSentTextContent:)]) {
+                [self.publicDelegate ltzInputTool:self didSentTextContent:content];
             }
             
             growingTextView.text = @"";
